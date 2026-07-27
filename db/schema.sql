@@ -26,7 +26,9 @@ CREATE TABLE "Surgeries" (
   "operating_room" varchar,
   "status" varchar,
   "scheduled_time" datetime,
-  "end_time" datetime
+  "end_time" datetime,
+  FOREIGN KEY ("patient_id") REFERENCES "Patients" ("id"),
+  FOREIGN KEY ("surgeon_id") REFERENCES "Staff" ("id")
 );
 
 CREATE TABLE "Blood_Allocations" (
@@ -36,15 +38,8 @@ CREATE TABLE "Blood_Allocations" (
   "authorized_by" integer,
   "units_allocated" integer,
   "allocation_time" datetime,
-  "status" varchar
+  "status" varchar,
+  FOREIGN KEY ("inventory_id") REFERENCES "Blood_Inventory" ("id"),
+  FOREIGN KEY ("patient_id") REFERENCES "Patients" ("id"),
+  FOREIGN KEY ("authorized_by") REFERENCES "Staff" ("id")
 );
-
-ALTER TABLE "Surgeries" ADD FOREIGN KEY ("patient_id") REFERENCES "Patients" ("id") DEFERRABLE INITIALLY IMMEDIATE;
-
-ALTER TABLE "Surgeries" ADD FOREIGN KEY ("surgeon_id") REFERENCES "Staff" ("id") DEFERRABLE INITIALLY IMMEDIATE;
-
-ALTER TABLE "Blood_Allocations" ADD FOREIGN KEY ("inventory_id") REFERENCES "Blood_Inventory" ("id") DEFERRABLE INITIALLY IMMEDIATE;
-
-ALTER TABLE "Blood_Allocations" ADD FOREIGN KEY ("patient_id") REFERENCES "Patients" ("id") DEFERRABLE INITIALLY IMMEDIATE;
-
-ALTER TABLE "Blood_Allocations" ADD FOREIGN KEY ("authorized_by") REFERENCES "Staff" ("id") DEFERRABLE INITIALLY IMMEDIATE;
