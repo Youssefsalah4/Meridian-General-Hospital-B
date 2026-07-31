@@ -61,12 +61,7 @@ class MeridianAgentClient:
             )
             read, write = await self._exit_stack.enter_async_context(stdio_client(params))
         elif TRANSPORT == "sse":
-            # FIX 2: real remote transport, matching mcp_server/transport.py's
-            # `mcp_instance.run(transport="sse", ...)`. Role/auth for SSE
-            # should move to a real auth header once the server supports it —
-            # today the server still reads STAFF_TOKEN from its own process
-            # env, so SSE mode only makes sense once Person 2 adds header-based
-            # auth. Left explicit rather than silently wrong.
+            
             read, write = await self._exit_stack.enter_async_context(sse_client(SERVER_SSE_URL))
         else:
             raise ValueError(f"Unknown MCP_TRANSPORT '{TRANSPORT}' — expected 'stdio' or 'sse'.")
@@ -91,9 +86,7 @@ class MeridianAgentClient:
                   "allocate_blood may fail closed for O- requests, or the tool "
                   "may not even be offered.")
 
-        # FIX 3: same graceful check, extended to resources — a client that
-        # blindly calls read_resource() against a server that never declared
-        # resource support would crash instead of degrading safely.
+        
         if not getattr(self.server_capabilities, "resources", None):
             print("[client] NOTE: server did not declare resources support. "
                   "read_policy() will not be called.")
@@ -127,21 +120,17 @@ class MeridianAgentClient:
     # ------------------------------------------------------------------
     # Elicitation: pause and get a real human decision (Blood Bank Director)
     # ------------------------------------------------------------------
-    async def _handle_elicitation(self, request):
+    async def _handle_elicitation(self, context, params):
         """
         Called by the SDK when the server sends elicitation/create — e.g.
         allocate_blood requesting O-negative units needs Director sign-off.
-
-        Server checks `res.get("action")` for "accept" (see
-        mcp_server/tools.py allocate_blood) so the shape returned here must
-        match: {"action": "accept" | "decline"}.
+        The SDK calls this with (context, params) — context carries
+        request metadata, params is the actual ElicitRequestParams.
         """
-        print(f"[client] ELICITATION requested: {request.message}")
-        for field, schema in request.requestedSchema.get("properties", {}).items():
+        print(f"[client] ELICITATION requested: {params.message}")
+        for field, schema in params.requestedSchema.get("properties", {}).items():
             print(f"    needs: {field} ({schema.get('description', '')})")
 
-        # Placeholder — demo.py overrides this with scripted director responses
-        # for repeatable test runs. A real interactive session would prompt input().
         decision = input("[client] Director decision (approve/deny): ").strip().lower()
         return {"action": "accept" if decision == "approve" else "decline"}
 
