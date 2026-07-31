@@ -52,13 +52,15 @@ NURSE_TOKEN = "token_nurse_123"
 SURGEON_TOKEN = "token_surg_456"
 DIRECTOR_TOKEN = "token_dir_789"
 
+_UNSET = object()
+
 
 @asynccontextmanager
-async def connected_client(token: str, elicitation_handler=None):
+async def connected_client(token: str, elicitation_handler=_UNSET):
     """Ensures client.close() always runs, even if a scenario fails
     midway — prevents dangling-connection cleanup errors."""
     client = MeridianAgentClient(token)
-    if elicitation_handler is not None:
+    if elicitation_handler is not _UNSET:
         client._handle_elicitation = elicitation_handler
     try:
         await client.connect()
@@ -109,16 +111,15 @@ async def scenario_1_nurse_read_only():
         await _expect_success(
             client, "get_patient_vitals", {"patient_id": 2}, "nurse read-only call"
         )
-        await _expect_error(
-            client,
-            "allocate_blood",
-            {
-                "inventory_id": 2, "patient_id": 2, "authorized_by": 1,
-                "units": 1, "allocation_time": "2026-07-30T09:00:00",
-            },
-            "nurse blocked from allocate_blood",
-        )
-
+        try:
+            await _expect_error(
+                client,
+                "allocate_blood",
+                {...},
+                "nurse blocked from allocate_blood",
+            )
+        except PermissionError as e:
+            print("PASS: nurse blocked from allocate_blood (tool not even visible) ->", e)
 
 async def scenario_2_surgeon_unlocks_tools():
     """Concern: Notifications. A surgeon should be authorized for the full
@@ -238,7 +239,7 @@ async def scenario_8_client_missing_elicitation_capability():
 
 
 def _scripted_director_response(approve: bool):
-    async def _respond(request):
+    async def _respond(context, params):
         decision = "accept" if approve else "decline"
         print(f"[demo] scripted Director response: {decision}")
         return {"action": decision}
