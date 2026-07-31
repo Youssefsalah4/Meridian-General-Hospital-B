@@ -2,10 +2,7 @@
 agent/client.py
 Meridian Surgical & Blood Bank — Agent Client
 
-Built against mcp_server/TOOLS_SPEC.md. Tool names / schemas here should be
-kept in sync with Person 2's actual server. Swap the connection block in
-`connect()` from stdio -> Streamable HTTP once the server moves to remote,
-per the lab's transport requirement.
+Wired against the real mcp_server/ implementation (Task 2, complete).
 
 Covers, on the client side, every protocol concern the server implements:
   - capability negotiation  -> _check_capabilities()
@@ -24,15 +21,14 @@ from dotenv import load_dotenv
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-
-# from mcp.client.streamable_http import streamablehttp_client  # for remote transport later
+from mcp.client.sse import sse_client  # server.py runs "sse" transport in production
 
 load_dotenv()
 
 # --- Config -----------------------------------------------------------
-TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")  # "stdio" | "http"
+TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")  # "stdio" | "sse"  (matches mcp_server/transport.py)
 SERVER_SCRIPT = os.getenv("MCP_SERVER_SCRIPT", "../mcp_server/server.py")
-SERVER_HTTP_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp")
+SERVER_SSE_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8000/sse")
 
 
 class MeridianAgentClient:
@@ -50,13 +46,30 @@ class MeridianAgentClient:
     # ------------------------------------------------------------------
     async def connect(self):
         if TRANSPORT == "stdio":
-            params = StdioServerParameters(command="python", args=[SERVER_SCRIPT])
+            # FIX 1: the server reads its role from the STAFF_TOKEN env var of
+            # its OWN process (see mcp_server/tools.py _get_current_token()).
+            # Since stdio spawns the server as a child process, we MUST pass
+            # our token into that child's environment or the server will
+            # always fall back to the nurse default, no matter who we are.
+            child_env = os.environ.copy()
+            child_env["STAFF_TOKEN"] = self.staff_auth_token
+
+            params = StdioServerParameters(
+                command="python",
+                args=[SERVER_SCRIPT],
+                env=child_env,
+            )
             read, write = await self._exit_stack.enter_async_context(stdio_client(params))
+        elif TRANSPORT == "sse":
+            # FIX 2: real remote transport, matching mcp_server/transport.py's
+            # `mcp_instance.run(transport="sse", ...)`. Role/auth for SSE
+            # should move to a real auth header once the server supports it —
+            # today the server still reads STAFF_TOKEN from its own process
+            # env, so SSE mode only makes sense once Person 2 adds header-based
+            # auth. Left explicit rather than silently wrong.
+            read, write = await self._exit_stack.enter_async_context(sse_client(SERVER_SSE_URL))
         else:
-            # read, write, _ = await self._exit_stack.enter_async_context(
-            #     streamablehttp_client(SERVER_HTTP_URL, headers={"Authorization": self.staff_auth_token})
-            # )
-            raise NotImplementedError("Wire up streamable_http_client once server supports remote transport.")
+            raise ValueError(f"Unknown MCP_TRANSPORT '{TRANSPORT}' — expected 'stdio' or 'sse'.")
 
         self.session = await self._exit_stack.enter_async_context(
             ClientSession(
@@ -78,8 +91,16 @@ class MeridianAgentClient:
                   "allocate_blood may fail closed for O- requests, or the tool "
                   "may not even be offered.")
 
+        # FIX 3: same graceful check, extended to resources — a client that
+        # blindly calls read_resource() against a server that never declared
+        # resource support would crash instead of degrading safely.
+        if not getattr(self.server_capabilities, "resources", None):
+            print("[client] NOTE: server did not declare resources support. "
+                  "read_policy() will not be called.")
+
         await self._refresh_tools()
-        print(f"[client] connected. tools visible: {[t.name for t in self.available_tools]}")
+        print(f"[client] connected as role-token={self.staff_auth_token!r}. "
+              f"tools visible: {[t.name for t in self.available_tools]}")
 
     async def _refresh_tools(self):
         result = await self.session.list_tools()
@@ -111,9 +132,9 @@ class MeridianAgentClient:
         Called by the SDK when the server sends elicitation/create — e.g.
         allocate_blood requesting O-negative units needs Director sign-off.
 
-        In the real demo this should prompt a human (or a scripted director
-        response for repeatable test runs — see agent/demo.py). It must NOT
-        silently auto-approve.
+        Server checks `res.get("action")` for "accept" (see
+        mcp_server/tools.py allocate_blood) so the shape returned here must
+        match: {"action": "accept" | "decline"}.
         """
         print(f"[client] ELICITATION requested: {request.message}")
         for field, schema in request.requestedSchema.get("properties", {}).items():
@@ -129,20 +150,29 @@ class MeridianAgentClient:
     # ------------------------------------------------------------------
     async def _handle_sampling(self, request):
         """
-        Server-initiated sampling/createMessage. The server does not use its
-        own model here — it borrows the client's, so cost/latency shows up
-        on our side. Wire this to whichever model the team picked.
+        Server-initiated sampling/createMessage. NOTE: as of this Task 2
+        build, no tool in mcp_server/tools.py actually calls
+        session.send_request("sampling/createMessage", ...) yet — this
+        callback is registered and ready, but will not fire until Person 2
+        wires a tool to use it. Kept as a graceful fallback (not a crash)
+        so the demo doesn't break if/when that lands mid-integration.
         """
-        raise NotImplementedError(
-            "Wire this to your chosen model provider (Claude/GPT/Gemini/etc). "
-            "Should send request.messages to the model and return its reply "
-            "in the shape the SDK expects."
-        )
+        print("[client] SAMPLING requested by server — no model wired yet.")
+        return {
+            "role": "assistant",
+            "content": {
+                "type": "text",
+                "text": "[client] sampling_callback not yet wired to a model provider.",
+            },
+        }
 
     # ------------------------------------------------------------------
     # Resources: fetched as data, not called as a function
     # ------------------------------------------------------------------
     async def read_policy(self, uri: str = "resource://policy/emergency-transfusion"):
+        if not getattr(self.server_capabilities, "resources", None):
+            print("[client] Skipping read_policy — server has no resources capability.")
+            return None
         result = await self.session.read_resource(uri)
         return result.contents
 
@@ -155,12 +185,14 @@ class MeridianAgentClient:
     # ------------------------------------------------------------------
     # Tool calls
     # ------------------------------------------------------------------
-    async def call_tool(self, name: str, arguments: dict):
+    async def call_tool(self, name: str, arguments: dict, progress_callback=None):
         if name not in [t.name for t in self.available_tools]:
             raise PermissionError(
                 f"'{name}' is not in this session's visible tool set "
                 f"(role/auth may not permit it yet)."
             )
+        if progress_callback:
+            return await self.session.call_tool(name, arguments, progress_callback=progress_callback)
         return await self.session.call_tool(name, arguments)
 
     async def close(self):
@@ -168,7 +200,7 @@ class MeridianAgentClient:
 
 
 async def _smoke_test():
-    """Minimal manual check once server.py exists. Not the real demo."""
+    """Minimal manual check against the real server."""
     client = MeridianAgentClient(staff_auth_token=os.getenv("STAFF_TOKEN", "token_nurse_123"))
     try:
         await client.connect()
