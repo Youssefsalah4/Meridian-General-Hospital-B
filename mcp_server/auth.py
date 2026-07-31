@@ -44,7 +44,7 @@ def authenticate_staff(auth_token: str) -> Optional[Dict[str, Any]]:
     if not auth_token:
         return None
 
-    try:
+    try: 
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM "Staff" WHERE auth_token = ?', (auth_token,))

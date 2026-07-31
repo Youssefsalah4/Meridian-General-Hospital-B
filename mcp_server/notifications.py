@@ -16,7 +16,7 @@ async def notify_tools_changed(session) -> bool:
     """
     if not session:
         logger.warning("No active session to notify.")
-        return False
+        return False 
 
     try:
         # Check if the session object has the standard send_tools_list_changed helper
