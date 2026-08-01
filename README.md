@@ -272,9 +272,10 @@ MCP_TRANSPORT=sse MCP_SERVER_PORT=8000 python mcp_server/server.py
 | 8 | Capability negotiation (failure path) | Server blocks O- allocation for non-elicitation client |
 
 ---
+##  Project Demo Video
+Watch the full walkthrough of the Meridian MCP Server, including Elicitation, Sampling, and Progress updates:
+https://github.com/user-attachments/assets/ded6cc45-5edf-4bcb-ac97-c132bf4b1924
 
-## Security Notes
 
-- **No API keys or tokens are committed.** Use a `.env` file for `STAFF_TOKEN`, `MCP_SERVER_URL`, etc.
-- Add `.env` and `db/meridian.db` to `.gitignore`.
-- Authentication tokens in `seed.sql` are test strings only — replace before any real deployment.
+
+
