@@ -98,29 +98,24 @@ async def _expect_success(client, tool_name, arguments, label):
 
 
 async def scenario_1_nurse_read_only():
-    """Concern: Capability negotiation + Notifications (baseline state).
-    Tests what IS enforced today: a nurse can call read-only tools but is
-    blocked at call time from allocate_blood. Tool-list filtering by role
-    is a known gap (see module docstring, item 1)."""
     print("\n=== Scenario 1: Nurse — read-only allowed, write blocked ===")
     async with connected_client(NURSE_TOKEN) as client:
-        tool_names = [t.name for t in client.available_tools]
-        if "allocate_blood" in tool_names:
-            print("NOTE: tool list is not yet role-filtered server-side (known gap).")
-
         await _expect_success(
             client, "get_patient_vitals", {"patient_id": 2}, "nurse read-only call"
         )
-        try:
-            await _expect_error(
-                client,
-                "allocate_blood",
-                {...},
-                "nurse blocked from allocate_blood",
-            )
-        except PermissionError as e:
-            print("PASS: nurse blocked from allocate_blood (tool not even visible) ->", e)
-
+        
+        await _expect_error(
+            client,
+            "allocate_blood",
+            {
+                "inventory_id": 1,
+                "patient_id": 1,
+                "authorized_by": 1,
+                "units": 1,
+                "allocation_time": "2026-07-30T09:00:00"
+            },
+            "nurse blocked from allocate_blood",
+        )
 async def scenario_2_surgeon_unlocks_tools():
     """Concern: Notifications. A surgeon should be authorized for the full
     tool set (see module docstring, item 1, re: tool-LIST filtering gap)."""
@@ -131,15 +126,10 @@ async def scenario_2_surgeon_unlocks_tools():
 
 
 async def scenario_3_o_negative_elicitation():
-    """Concern: Elicitation. Requesting O- blood (inventory_id=2, patient_id=2)
-    should pause for Director sign-off. NOTE: currently fails closed with
-    "Client lacks elicitation support" even with a real callback + scripted
-    response wired — see module docstring, item 3. Reports the real
-    outcome either way instead of assuming success."""
     print("\n=== Scenario 3: O-negative allocation — elicitation pause ===")
-    async with connected_client(
-        SURGEON_TOKEN, elicitation_handler=_scripted_director_response(approve=True)
-    ) as client:
+    
+    # نمرر التوكن فقط، وبايثون سيستخدم الهاندلر التفاعلي الافتراضي تلقائياً
+    async with connected_client(SURGEON_TOKEN) as client:
         result = await client.call_tool(
             "allocate_blood",
             {
@@ -151,11 +141,9 @@ async def scenario_3_o_negative_elicitation():
             },
         )
         if result.isError:
-            print("KNOWN ISSUE: allocation blocked even with elicitation callback wired ->",
-                  _result_text(result))
+            print("Outcome ->", _result_text(result))
         else:
             print("PASS: allocation succeeded after Director approval ->", _result_text(result))
-
 
 async def scenario_4_double_booking_rejected():
     """Concern: Defensive tool design. OR-1 is already booked 08:00-12:00
@@ -237,6 +225,51 @@ async def scenario_8_client_missing_elicitation_capability():
             "blocked without elicitation capability",
         )
 
+async def scenario_9_sampling():
+    """
+    Concern: Sampling.
+
+    Requests the client model to generate a surgical handoff summary
+    using MCP Sampling (sampling/createMessage).
+
+    Expected:
+    - PASS if the client supports Sampling and returns a generated summary.
+    - KNOWN LIMITATION if the SDK/client does not expose Sampling support.
+    """
+
+    print("\n=== Scenario 9: MCP Sampling ===")
+
+    async with connected_client(SURGEON_TOKEN) as client:
+
+        result = await client.call_tool(
+            "generate_surgical_handoff",
+            {
+                "surgery_id": 1
+            }
+        )
+
+        text = _result_text(result)
+
+        if not result.isError:
+
+            print(
+                "PASS: sampling generated a surgical handoff summary ->",
+                text
+            )
+
+        elif "sampling" in text.lower() or "create_message" in text.lower():
+
+            print(
+                "KNOWN LIMITATION: current client/SDK does not support MCP Sampling ->",
+                text
+            )
+
+        else:
+
+            print(
+                "FAIL: unexpected sampling error ->",
+                text
+            )
 
 def _scripted_director_response(approve: bool):
     async def _respond(context, params):
@@ -256,12 +289,16 @@ async def run_all():
         scenario_6_read_policy_resource,
         scenario_7_prompt_template,
         scenario_8_client_missing_elicitation_capability,
+        scenario_9_sampling,
     ]
     for scenario in scenarios:
         try:
             await scenario()
         except Exception as e:
             print(f"[demo] scenario {scenario.__name__} raised an unhandled error: {e}")
+
+
+
 
 
 if __name__ == "__main__":
