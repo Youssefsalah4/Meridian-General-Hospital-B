@@ -18,6 +18,7 @@ import asyncio
 import os
 from contextlib import AsyncExitStack
 from dotenv import load_dotenv
+from google import genai
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -61,7 +62,12 @@ class MeridianAgentClient:
             )
             read, write = await self._exit_stack.enter_async_context(stdio_client(params))
         elif TRANSPORT == "sse":
-            
+            # FIX 2: real remote transport, matching mcp_server/transport.py's
+            # `mcp_instance.run(transport="sse", ...)`. Role/auth for SSE
+            # should move to a real auth header once the server supports it —
+            # today the server still reads STAFF_TOKEN from its own process
+            # env, so SSE mode only makes sense once Person 2 adds header-based
+            # auth. Left explicit rather than silently wrong.
             read, write = await self._exit_stack.enter_async_context(sse_client(SERVER_SSE_URL))
         else:
             raise ValueError(f"Unknown MCP_TRANSPORT '{TRANSPORT}' — expected 'stdio' or 'sse'.")
@@ -86,7 +92,9 @@ class MeridianAgentClient:
                   "allocate_blood may fail closed for O- requests, or the tool "
                   "may not even be offered.")
 
-        
+        # FIX 3: same graceful check, extended to resources — a client that
+        # blindly calls read_resource() against a server that never declared
+        # resource support would crash instead of degrading safely.
         if not getattr(self.server_capabilities, "resources", None):
             print("[client] NOTE: server did not declare resources support. "
                   "read_policy() will not be called.")
@@ -137,24 +145,41 @@ class MeridianAgentClient:
     # ------------------------------------------------------------------
     # Sampling: server asks OUR model to reason (e.g. urgency vs. policy)
     # ------------------------------------------------------------------
-    async def _handle_sampling(self, request):
+    async def _handle_sampling(self, context, params):
         """
-        Server-initiated sampling/createMessage. NOTE: as of this Task 2
-        build, no tool in mcp_server/tools.py actually calls
-        session.send_request("sampling/createMessage", ...) yet — this
-        callback is registered and ready, but will not fire until Person 2
-        wires a tool to use it. Kept as a graceful fallback (not a crash)
-        so the demo doesn't break if/when that lands mid-integration.
+        Server-initiated sampling/createMessage — e.g.
+        generate_surgical_handoff asking our model to draft a summary.
+        Wired to Gemini (GEMINI_API_KEY in .env).
         """
-        print("[client] SAMPLING requested by server — no model wired yet.")
+        print(f"[client] SAMPLING requested by server — {len(params.messages)} message(s).")
+
+        # Build a plain prompt string from the SDK's message objects.
+        prompt_parts = []
+        for msg in params.messages:
+            text = getattr(msg.content, "text", str(msg.content))
+            prompt_parts.append(text)
+        prompt = "\n".join(prompt_parts)
+
+        try:
+            gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            response = await gemini_client.aio.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+            )
+            answer_text = response.text
+        except Exception as e:
+            print(f"[client] Gemini call failed: {e}")
+            answer_text = f"[client] sampling call failed: {e}"
+
         return {
             "role": "assistant",
             "content": {
                 "type": "text",
-                "text": "[client] sampling_callback not yet wired to a model provider.",
+                "text": answer_text,
             },
+            "model": "gemini-2.5-flash",
+            "stopReason": "endTurn",
         }
-
     # ------------------------------------------------------------------
     # Resources: fetched as data, not called as a function
     # ------------------------------------------------------------------
