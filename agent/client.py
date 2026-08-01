@@ -177,7 +177,7 @@ class MeridianAgentClient:
                 "type": "text",
                 "text": answer_text,
             },
-            "model": "gemini-2.5-flash",
+           "model": "gemini-3.6-flash",,
             "stopReason": "endTurn",
         }
     # ------------------------------------------------------------------
