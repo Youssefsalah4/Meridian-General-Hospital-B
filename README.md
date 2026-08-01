@@ -274,7 +274,11 @@ MCP_TRANSPORT=sse MCP_SERVER_PORT=8000 python mcp_server/server.py
 ---
 ##  Project Demo Video
 Watch the full walkthrough of the Meridian MCP Server, including Elicitation, Sampling, and Progress updates:
-https://github.com/user-attachments/assets/ded6cc45-5edf-4bcb-ac97-c132bf4b1924
+
+
+https://github.com/user-attachments/assets/009c7051-a4a8-499f-b070-1315df6e8342
+
+
 
 
 
